@@ -21,8 +21,8 @@ unit_value = st.sidebar.number_input("Value of Product (Unit Cost $)", min_value
 physical_holding_cost = st.sidebar.number_input("Physical Holding Cost/Unit/Year ($)", min_value=0.0, value=10.0)
 cost_of_capital_pct = st.sidebar.number_input("Cost of Capital (Annual %)", min_value=0.0, value=12.0) / 100.0
 ordering_cost = st.sidebar.number_input("Ordering Cost per Order ($)", min_value=1.0, value=250.0)
-credit_rx = st.sidebar.number_input("Credit Time from Supplier (Days)", min_value=0, value=30, help="Clock starts on the day the order is processed.")
-credit_given = st.sidebar.number_input("Credit Time given to Buyer (Days)", min_value=0, value=15)
+credit_rx = st.sidebar.number_input("Credit Time from Supplier (Days)", min_value=0, value=30, help="Clock starts on the day the order is processed. 0 = Immediate payment.")
+credit_given = st.sidebar.number_input("Credit Time given to Buyer (Days)", min_value=0, value=15, help="0 = Immediate payment.")
 
 st.sidebar.header("3. Service & Ordering Parameters")
 service_level = st.sidebar.slider("Target Service Level (%)", min_value=50.0, max_value=99.99, value=95.0, step=0.1)
@@ -68,10 +68,6 @@ current_ar = 0.0
 history = []
 
 for day in range(sim_days):
-    # Process cash movements due today
-    current_ap -= ap_schedule[day]
-    current_ar -= ar_schedule[day]
-    
     # 1. Receive pending orders
     for order in pending_orders:
         if order['days_until_delivery'] == 0:
@@ -91,6 +87,7 @@ for day in range(sim_days):
         
     inventory -= sold
     
+    # Add to Receivables and schedule collection
     current_ar += sold * unit_value
     ar_schedule[day + credit_given] += sold * unit_value
         
@@ -113,7 +110,11 @@ for day in range(sim_days):
     for order in pending_orders:
         order['days_until_delivery'] -= 1
         
-    # 5. Financial Daily Calculations
+    # 5. Process cash movements due today (Moved to end of day to handle 0-day terms)
+    current_ap -= ap_schedule[day]
+    current_ar -= ar_schedule[day]
+        
+    # 6. Financial Daily Calculations
     inventory_value = inventory * unit_value
     capital_required = inventory_value + current_ar - current_ap - opening_capital
     daily_phys_cost = inventory * (physical_holding_cost / 365.0)
