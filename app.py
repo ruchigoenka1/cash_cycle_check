@@ -16,7 +16,9 @@ variation = st.sidebar.number_input("Demand Variation (Std Dev)", min_value=0.0,
 lead_time = st.sidebar.number_input("Lead Time (Days)", min_value=1, value=5)
 
 st.sidebar.header("2. Financial & Credit Terms")
-opening_capital = st.sidebar.number_input("Opening Capital Balance ($)", value=0.0, help="Initial cash available to fund operations.")
+# Updated input for Initial Capital / Cash Balance
+opening_capital = st.sidebar.number_input("Initial Capital Balance ($)", min_value=0.0, value=100000.0, step=5000.0, help="Initial cash available to fund operations. Defaults to 100k.")
+
 unit_value = st.sidebar.number_input("Value of Product (Unit Cost $)", min_value=0.1, value=100.0)
 physical_holding_cost = st.sidebar.number_input("Physical Holding Cost/Unit/Year ($)", min_value=0.0, value=10.0, help="Warehousing, insurance, etc. Excluding capital cost.")
 cost_of_capital_pct = st.sidebar.number_input("Cost of Capital (Annual %)", min_value=0.0, value=12.0, help="Interest rate on utilized cash.") / 100.0
