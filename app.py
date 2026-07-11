@@ -7,21 +7,19 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Inventory & Cash Flow Simulation", layout="wide")
 
 st.title("📦 Inventory & Cash Flow Simulation")
-st.markdown("This dashboard simulates daily inventory operations and precisely tracks the **Cash Utilized** (Working Capital) based on credit terms to calculate the true cost of capital.")
+st.markdown("This dashboard simulates daily operations, tracks the true **Cost of Capital** based on credit terms, and uses **Inventory Position** (On-Hand + On-Order) to manage long lead times.")
 
 # --- SIDEBAR INPUTS ---
 st.sidebar.header("1. Demand & Lead Time")
 avg_demand = st.sidebar.number_input("Average Daily Demand", min_value=1.0, value=50.0)
-variation = st.sidebar.number_input("Demand Variation (Std Dev)", min_value=0.0, value=10.0)
-lead_time = st.sidebar.number_input("Lead Time (Days)", min_value=1, value=5)
+variation = st.sidebar.number_input("Demand Variation (Std Dev)", min_value=0.0, value=0.0)
+lead_time = st.sidebar.number_input("Lead Time (Days)", min_value=1, value=60)
 
 st.sidebar.header("2. Financial & Credit Terms")
-# Updated input for Initial Capital / Cash Balance
-opening_capital = st.sidebar.number_input("Initial Capital Balance ($)", min_value=0.0, value=100000.0, step=5000.0, help="Initial cash available to fund operations. Defaults to 100k.")
-
+opening_capital = st.sidebar.number_input("Initial Capital Balance ($)", min_value=0.0, value=100000.0, step=5000.0)
 unit_value = st.sidebar.number_input("Value of Product (Unit Cost $)", min_value=0.1, value=100.0)
-physical_holding_cost = st.sidebar.number_input("Physical Holding Cost/Unit/Year ($)", min_value=0.0, value=10.0, help="Warehousing, insurance, etc. Excluding capital cost.")
-cost_of_capital_pct = st.sidebar.number_input("Cost of Capital (Annual %)", min_value=0.0, value=12.0, help="Interest rate on utilized cash.") / 100.0
+physical_holding_cost = st.sidebar.number_input("Physical Holding Cost/Unit/Year ($)", min_value=0.0, value=10.0)
+cost_of_capital_pct = st.sidebar.number_input("Cost of Capital (Annual %)", min_value=0.0, value=12.0) / 100.0
 ordering_cost = st.sidebar.number_input("Ordering Cost per Order ($)", min_value=1.0, value=250.0)
 credit_rx = st.sidebar.number_input("Credit Time from Supplier (Days)", min_value=0, value=30)
 credit_given = st.sidebar.number_input("Credit Time given to Buyer (Days)", min_value=0, value=15)
@@ -29,12 +27,16 @@ credit_given = st.sidebar.number_input("Credit Time given to Buyer (Days)", min_
 st.sidebar.header("3. Service & Ordering Parameters")
 service_level = st.sidebar.slider("Target Service Level (%)", min_value=50.0, max_value=99.99, value=95.0, step=0.1)
 
+st.sidebar.header("4. Simulation Settings")
+sim_days = st.sidebar.number_input("Simulation Duration (Days)", min_value=30, value=365, step=30)
+warmup_days = st.sidebar.number_input("Warm-up Period to Exclude (Days)", min_value=0, max_value=sim_days-1, value=0, help="Removes the initial days from charts and KPIs to show steady-state behavior.")
+
 # --- CALCULATIONS FOR RECOMMENDED ROP & EOQ ---
 z_score = stats.norm.ppf(service_level / 100.0)
 safety_stock = z_score * variation * np.sqrt(lead_time)
 recommended_rop = (avg_demand * lead_time) + safety_stock
 
-# For EOQ, base Holding Cost = Physical + Base Capital Cost
+# Base Holding Cost = Physical + Base Capital Cost
 base_capital_cost_per_unit = unit_value * cost_of_capital_pct
 eoq_holding_cost = physical_holding_cost + base_capital_cost_per_unit
 annual_demand = avg_demand * 365
@@ -49,76 +51,71 @@ rop_input = st.sidebar.number_input("Actual Reorder Point (ROP)", min_value=0, v
 order_qty = st.sidebar.number_input("Order Quantity", min_value=1, value=int(eoq))
 
 # --- SIMULATION LOGIC ---
-days = 365
 np.random.seed(42)
-daily_demands = np.maximum(0, np.random.normal(avg_demand, variation, days))
+daily_demands = np.maximum(0, np.random.normal(avg_demand, variation, sim_days))
 
 # Initialize variables
 inventory = rop_input + order_qty
-days_until_delivery = 0
-order_pending = False
-orders_placed = 0
-stockout_days = 0
-total_demand_sim = 0
-fulfilled_demand = 0
+pending_orders = [] # List to hold multiple incoming orders
 
 # Financial tracking schedules
 max_buffer = max(credit_rx, credit_given) + lead_time + 1
-ap_schedule = np.zeros(days + max_buffer)
-ar_schedule = np.zeros(days + max_buffer)
+ap_schedule = np.zeros(sim_days + max_buffer)
+ar_schedule = np.zeros(sim_days + max_buffer)
 current_ap = 0.0 
 current_ar = 0.0 
 
 history = []
 
-for day in range(days):
+for day in range(sim_days):
     # Process cash movements due today
     current_ap -= ap_schedule[day]
     current_ar -= ar_schedule[day]
     
     # 1. Receive pending orders
-    if order_pending and days_until_delivery == 0:
-        inventory += order_qty
-        order_pending = False
-        current_ap += order_qty * unit_value
-        ap_schedule[day + credit_rx] += order_qty * unit_value
+    for order in pending_orders:
+        if order['days_until_delivery'] == 0:
+            inventory += order['qty']
+            current_ap += order['qty'] * unit_value
+            ap_schedule[day + credit_rx] += order['qty'] * unit_value
+            order['delivered'] = True
+            
+    # Remove delivered orders from list
+    pending_orders = [o for o in pending_orders if not o.get('delivered', False)]
     
     # 2. Process today's demand
     demand_today = daily_demands[day]
-    total_demand_sim += demand_today
     
     if inventory >= demand_today:
         sold = demand_today
     else:
         sold = inventory
-        stockout_days += 1
         
     inventory -= sold
-    fulfilled_demand += sold
     
     current_ar += sold * unit_value
     ar_schedule[day + credit_given] += sold * unit_value
         
-    # 3. Place new orders
+    # 3. Place new orders using INVENTORY POSITION
+    # Inventory Position = Stock on Hand + Stock on Order
+    on_order_qty = sum(o['qty'] for o in pending_orders)
+    inventory_position = inventory + on_order_qty
+    
     placed_today = 0
-    if inventory <= rop_input and not order_pending:
-        order_pending = True
-        days_until_delivery = lead_time
-        orders_placed += 1
-        placed_today = 1
+    # Place as many orders as needed to get Position > ROP
+    while inventory_position <= rop_input:
+        pending_orders.append({'days_until_delivery': lead_time, 'qty': order_qty})
+        inventory_position += order_qty
+        placed_today += 1
         
-    # 4. Advance delivery timer
-    if order_pending and placed_today == 0:
-        days_until_delivery -= 1
+    # 4. Advance delivery timer for NEXT day
+    for order in pending_orders:
+        order['days_until_delivery'] -= 1
         
     # 5. Financial Daily Calculations
     inventory_value = inventory * unit_value
-    
-    # Net Capital Required (Borrowing) = Operations assets - Financed by AP - Opening Cash
     capital_required = inventory_value + current_ar - current_ap - opening_capital
-    
     daily_phys_cost = inventory * (physical_holding_cost / 365.0)
-    # Only charge capital cost if we are in a deficit (capital_required > 0)
     daily_cap_cost = max(0, capital_required) * (cost_of_capital_pct / 365.0)
     
     history.append({
@@ -126,6 +123,8 @@ for day in range(days):
         "Demand": round(demand_today, 1),
         "Sales": round(sold, 1),
         "Inventory Units": round(inventory, 1),
+        "Orders Placed": placed_today,
+        "Inventory Position": round(inventory_position, 1),
         "Inventory Value ($)": round(inventory_value, 2),
         "Accounts Receivable ($)": round(current_ar, 2),
         "Accounts Payable ($)": round(current_ap, 2),
@@ -134,22 +133,28 @@ for day in range(days):
         "Daily Capital Cost ($)": round(daily_cap_cost, 2)
     })
 
-# Convert to DataFrame
+# Convert to DataFrame and slice for Warm-up Period
 df = pd.DataFrame(history)
+df_kpi = df.iloc[warmup_days:].copy()
 
-# --- KPI CALCULATIONS ---
-avg_inv = df["Inventory Units"].mean()
-min_inv = df["Inventory Units"].min()
-max_inv = df["Inventory Units"].max()
-fill_rate = (fulfilled_demand / total_demand_sim) * 100 if total_demand_sim > 0 else 0
+# --- KPI CALCULATIONS (Based on Steady-State / Filtered Data) ---
+avg_inv = df_kpi["Inventory Units"].mean()
+min_inv = df_kpi["Inventory Units"].min()
+max_inv = df_kpi["Inventory Units"].max()
 
-total_phys_holding_cost = df["Daily Phys. Holding Cost ($)"].sum()
-total_capital_cost = df["Daily Capital Cost ($)"].sum()
-total_ordering_cost = orders_placed * ordering_cost
+total_demand_kpi = df_kpi["Demand"].sum()
+total_sales_kpi = df_kpi["Sales"].sum()
+fill_rate = (total_sales_kpi / total_demand_kpi) * 100 if total_demand_kpi > 0 else 0
+stockout_days = len(df_kpi[df_kpi["Demand"] > df_kpi["Sales"]])
+
+total_phys_holding_cost = df_kpi["Daily Phys. Holding Cost ($)"].sum()
+total_capital_cost = df_kpi["Daily Capital Cost ($)"].sum()
+total_orders_kpi = df_kpi["Orders Placed"].sum()
+total_ordering_cost = total_orders_kpi * ordering_cost
 total_inventory_cost = total_phys_holding_cost + total_capital_cost + total_ordering_cost
 
 # --- DASHBOARD METRICS ---
-st.header("KPIs & Results (365 Days)")
+st.header(f"KPIs & Results (Days {warmup_days + 1} to {sim_days})")
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -172,9 +177,9 @@ tab1, tab2 = st.tabs(["📉 Inventory Movement", "💵 Cash / Capital Movement"]
 
 with tab1:
     fig_inv = go.Figure()
-    fig_inv.add_trace(go.Scatter(x=df["Day"], y=df["Inventory Units"], mode='lines', name='Inventory Level', line=dict(color='#1f77b4')))
-    fig_inv.add_trace(go.Scatter(x=[1, days], y=[rop_input, rop_input], mode='lines', name='Reorder Point (ROP)', line=dict(color='#d62728', dash='dash')))
-    fig_inv.add_trace(go.Scatter(x=[1, days], y=[safety_stock, safety_stock], mode='lines', name='Safety Stock', line=dict(color='#ff7f0e', dash='dash')))
+    fig_inv.add_trace(go.Scatter(x=df_kpi["Day"], y=df_kpi["Inventory Units"], mode='lines', name='Inventory Level (On Hand)', line=dict(color='#1f77b4')))
+    fig_inv.add_trace(go.Scatter(x=[df_kpi["Day"].min(), df_kpi["Day"].max()], y=[rop_input, rop_input], mode='lines', name='Reorder Point (ROP)', line=dict(color='#d62728', dash='dash')))
+    fig_inv.add_trace(go.Scatter(x=[df_kpi["Day"].min(), df_kpi["Day"].max()], y=[safety_stock, safety_stock], mode='lines', name='Safety Stock', line=dict(color='#ff7f0e', dash='dash')))
     fig_inv.update_layout(xaxis_title="Days", yaxis_title="Units in Stock", hovermode="x unified", height=500)
     st.plotly_chart(fig_inv, use_container_width=True)
 
@@ -183,16 +188,16 @@ with tab2:
     
     # Positive Capital Contributors (Stack 1)
     if opening_capital > 0:
-        fig_cash.add_trace(go.Scatter(x=df["Day"], y=[opening_capital]*days, mode='lines', name='Opening Capital Buffer', stackgroup='one', fillcolor='#ff7f0e', line=dict(width=0)))
+        fig_cash.add_trace(go.Scatter(x=df_kpi["Day"], y=[opening_capital]*len(df_kpi), mode='lines', name='Opening Capital Buffer', stackgroup='one', fillcolor='#ff7f0e', line=dict(width=0)))
     
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Inventory Value ($)"], mode='lines', name='Inventory Value', stackgroup='one', fillcolor='#1f77b4', line=dict(width=0)))
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Accounts Receivable ($)"], mode='lines', name='Accounts Receivable', stackgroup='one', fillcolor='#2ca02c', line=dict(width=0)))
+    fig_cash.add_trace(go.Scatter(x=df_kpi["Day"], y=df_kpi["Inventory Value ($)"], mode='lines', name='Inventory Value', stackgroup='one', fillcolor='#1f77b4', line=dict(width=0)))
+    fig_cash.add_trace(go.Scatter(x=df_kpi["Day"], y=df_kpi["Accounts Receivable ($)"], mode='lines', name='Accounts Receivable', stackgroup='one', fillcolor='#2ca02c', line=dict(width=0)))
     
     # Negative Capital Contributors (Stack 2)
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=-df["Accounts Payable ($)"], mode='lines', name='Accounts Payable', stackgroup='two', fillcolor='#d62728', line=dict(width=0)))
+    fig_cash.add_trace(go.Scatter(x=df_kpi["Day"], y=-df_kpi["Accounts Payable ($)"], mode='lines', name='Accounts Payable', stackgroup='two', fillcolor='#d62728', line=dict(width=0)))
     
     # Net Capital Required Line
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Net Capital Required ($)"], mode='lines', name='Net Capital Required (Borrowing)', line=dict(color='#00e5ff', width=3)))
+    fig_cash.add_trace(go.Scatter(x=df_kpi["Day"], y=df_kpi["Net Capital Required ($)"], mode='lines', name='Net Capital Required (Borrowing)', line=dict(color='#00e5ff', width=3)))
     
     fig_cash.update_layout(
         title="Where is the Cash? (Capital Utilized Breakdown)",
@@ -206,6 +211,6 @@ with tab2:
 
 # --- DAILY DATA TABLE ---
 st.markdown("---")
-st.subheader("📋 Daily Simulation Data")
-st.markdown("Use this table to audit the day-by-day flow of inventory and capital.")
-st.dataframe(df, use_container_width=True, height=300)
+st.subheader("📋 Steady-State Daily Data")
+st.markdown("Auditing the day-by-day flow of inventory and capital (Warm-up period excluded).")
+st.dataframe(df_kpi, use_container_width=True, height=300)
