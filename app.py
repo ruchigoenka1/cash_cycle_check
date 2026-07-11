@@ -16,7 +16,7 @@ variation = st.sidebar.number_input("Demand Variation (Std Dev)", min_value=0.0,
 lead_time = st.sidebar.number_input("Lead Time (Days)", min_value=1, value=60)
 
 st.sidebar.header("2. Financial & Credit Terms")
-opening_capital = st.sidebar.number_input("Initial Cash Balance ($)", min_value=0.0, value=100000.0, step=5000.0)
+opening_capital = st.sidebar.number_input("Initial Cash Balance ($)", value=0.0, step=5000.0, help="Starting cash before buying initial inventory.")
 unit_value = st.sidebar.number_input("Value of Product (Unit Cost $)", min_value=0.1, value=100.0)
 physical_holding_cost = st.sidebar.number_input("Physical Holding Cost/Unit/Year ($)", min_value=0.0, value=10.0)
 cost_of_capital_pct = st.sidebar.number_input("Cost of Capital (Annual %)", min_value=0.0, value=12.0) / 100.0
@@ -50,6 +50,17 @@ st.sidebar.info(f"**Calculated EOQ:** {int(eoq)} units\n\n**Recommended ROP:** {
 rop_input = st.sidebar.number_input("Actual Reorder Point (ROP)", min_value=0, value=int(recommended_rop))
 order_qty = st.sidebar.number_input("Order Quantity", min_value=1, value=int(eoq))
 
+# --- INITIAL CASH CALCULATION ---
+initial_inventory = rop_input + order_qty
+initial_inventory_value = initial_inventory * unit_value
+effective_opening_cash = opening_capital - initial_inventory_value
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Day 0 Starting Position")
+st.sidebar.markdown(f"**Opening Cash:** ${opening_capital:,.2f}")
+st.sidebar.markdown(f"**Cost of Starting Inventory:** -${initial_inventory_value:,.2f}")
+st.sidebar.markdown(f"**Effective Starting Cash:** **${effective_opening_cash:,.2f}**")
+
 # --- VECTORIZED SIMULATION LOGIC ---
 np.random.seed(42)
 daily_demands = np.maximum(0, np.random.normal(avg_demand, variation, sim_days))
@@ -63,7 +74,7 @@ cash_out_events = np.zeros(sim_days + max_buffer)
 cash_in_events = np.zeros(sim_days + max_buffer)
 
 # State trackers for the loop
-inventory = rop_input + order_qty
+inventory = initial_inventory
 on_order = 0
 
 # History arrays
@@ -121,8 +132,8 @@ df["Cash Inflow ($)"] = cash_in_events[:sim_days]
 df["Cash Outflow ($)"] = cash_out_events[:sim_days]
 df["Net Daily Cash Flow ($)"] = df["Cash Inflow ($)"] - df["Cash Outflow ($)"]
 
-# Running Cash Balance = Initial Capital + Cumulative Sum of Net Cash Flows
-df["Running Cash Balance ($)"] = opening_capital + df["Net Daily Cash Flow ($)"].cumsum()
+# Running Cash Balance = Effective Opening Cash + Cumulative Sum of Net Cash Flows
+df["Running Cash Balance ($)"] = effective_opening_cash + df["Net Daily Cash Flow ($)"].cumsum()
 
 # Capital Required is any deficit in the cash balance
 df["Capital Deficit (Borrowing) ($)"] = np.maximum(0, -df["Running Cash Balance ($)"])
