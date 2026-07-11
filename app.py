@@ -183,7 +183,7 @@ with col3:
     st.metric(label="Cost of Capital", value=f"${total_capital_cost:,.0f}")
 with col4:
     st.metric(label="Ordering Cost", value=f"${total_ordering_cost:,.0f}")
-    st.metric(label="Total Orders Placed", value=f"{total_orders_kpi}")
+    st.metric(label="Total Orders Placed", value=f"{int(total_orders_kpi)}")
 
 # --- COLLAPSIBLE MIN/MAX SECTION ---
 with st.expander("📊 View Min/Max Financial & Inventory Details"):
@@ -245,7 +245,7 @@ st.markdown("---")
 st.subheader("📋 Daily Cash Flow Statement & Inventory")
 st.markdown("Auditing the day-by-day cash disbursements and receipts.")
 cols_to_show = [
-    "Day", "Demand", "Sales", "Inventory Units", "Inventory Position", 
+    "Day", "Demand", "Sales", "Inventory Units", "Orders Placed", "Inventory Position", 
     "Cash Outflow ($)", "Cash Inflow ($)", "Net Daily Cash Flow ($)", 
     "Running Cash Balance ($)", "Capital Deficit (Borrowing) ($)", 
     "Daily Phys. Holding Cost ($)", "Daily Capital Cost ($)"
