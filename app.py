@@ -16,6 +16,7 @@ variation = st.sidebar.number_input("Demand Variation (Std Dev)", min_value=0.0,
 lead_time = st.sidebar.number_input("Lead Time (Days)", min_value=1, value=5)
 
 st.sidebar.header("2. Financial & Credit Terms")
+opening_capital = st.sidebar.number_input("Opening Capital Balance ($)", value=0.0, help="Initial cash available to fund operations.")
 unit_value = st.sidebar.number_input("Value of Product (Unit Cost $)", min_value=0.1, value=100.0)
 physical_holding_cost = st.sidebar.number_input("Physical Holding Cost/Unit/Year ($)", min_value=0.0, value=10.0, help="Warehousing, insurance, etc. Excluding capital cost.")
 cost_of_capital_pct = st.sidebar.number_input("Cost of Capital (Annual %)", min_value=0.0, value=12.0, help="Interest rate on utilized cash.") / 100.0
@@ -59,14 +60,13 @@ stockout_days = 0
 total_demand_sim = 0
 fulfilled_demand = 0
 
-# Financial tracking schedules (padded to handle future payments beyond 365 days)
+# Financial tracking schedules
 max_buffer = max(credit_rx, credit_given) + lead_time + 1
 ap_schedule = np.zeros(days + max_buffer)
 ar_schedule = np.zeros(days + max_buffer)
-current_ap = 0.0 # Accounts Payable (Money we owe supplier)
-current_ar = 0.0 # Accounts Receivable (Money buyers owe us)
+current_ap = 0.0 
+current_ar = 0.0 
 
-# History lists for charts and tables
 history = []
 
 for day in range(days):
@@ -78,7 +78,6 @@ for day in range(days):
     if order_pending and days_until_delivery == 0:
         inventory += order_qty
         order_pending = False
-        # We owe this to supplier in 'credit_rx' days
         current_ap += order_qty * unit_value
         ap_schedule[day + credit_rx] += order_qty * unit_value
     
@@ -95,8 +94,6 @@ for day in range(days):
     inventory -= sold
     fulfilled_demand += sold
     
-    # We collect money for sold goods in 'credit_given' days
-    # (Calculated at cost value to measure exact capital tied up)
     current_ar += sold * unit_value
     ar_schedule[day + credit_given] += sold * unit_value
         
@@ -115,12 +112,12 @@ for day in range(days):
     # 5. Financial Daily Calculations
     inventory_value = inventory * unit_value
     
-    # Capital Utilized = (Cash tied up in Inventory) + (Cash tied up in AR) - (Cash financed by AP)
-    capital_utilized = inventory_value + current_ar - current_ap
+    # Net Capital Required (Borrowing) = Operations assets - Financed by AP - Opening Cash
+    capital_required = inventory_value + current_ar - current_ap - opening_capital
     
-    # Calculate daily costs
     daily_phys_cost = inventory * (physical_holding_cost / 365.0)
-    daily_cap_cost = max(0, capital_utilized) * (cost_of_capital_pct / 365.0)
+    # Only charge capital cost if we are in a deficit (capital_required > 0)
+    daily_cap_cost = max(0, capital_required) * (cost_of_capital_pct / 365.0)
     
     history.append({
         "Day": day + 1,
@@ -130,7 +127,7 @@ for day in range(days):
         "Inventory Value ($)": round(inventory_value, 2),
         "Accounts Receivable ($)": round(current_ar, 2),
         "Accounts Payable ($)": round(current_ap, 2),
-        "Capital Utilized ($)": round(capital_utilized, 2),
+        "Net Capital Required ($)": round(capital_required, 2),
         "Daily Phys. Holding Cost ($)": round(daily_phys_cost, 2),
         "Daily Capital Cost ($)": round(daily_cap_cost, 2)
     })
@@ -173,23 +170,27 @@ tab1, tab2 = st.tabs(["📉 Inventory Movement", "💵 Cash / Capital Movement"]
 
 with tab1:
     fig_inv = go.Figure()
-    fig_inv.add_trace(go.Scatter(x=df["Day"], y=df["Inventory Units"], mode='lines', name='Inventory Level', line=dict(color='blue')))
-    fig_inv.add_trace(go.Scatter(x=[1, days], y=[rop_input, rop_input], mode='lines', name='Reorder Point (ROP)', line=dict(color='red', dash='dash')))
-    fig_inv.add_trace(go.Scatter(x=[1, days], y=[safety_stock, safety_stock], mode='lines', name='Safety Stock', line=dict(color='orange', dash='dash')))
+    fig_inv.add_trace(go.Scatter(x=df["Day"], y=df["Inventory Units"], mode='lines', name='Inventory Level', line=dict(color='#1f77b4')))
+    fig_inv.add_trace(go.Scatter(x=[1, days], y=[rop_input, rop_input], mode='lines', name='Reorder Point (ROP)', line=dict(color='#d62728', dash='dash')))
+    fig_inv.add_trace(go.Scatter(x=[1, days], y=[safety_stock, safety_stock], mode='lines', name='Safety Stock', line=dict(color='#ff7f0e', dash='dash')))
     fig_inv.update_layout(xaxis_title="Days", yaxis_title="Units in Stock", hovermode="x unified", height=500)
     st.plotly_chart(fig_inv, use_container_width=True)
 
 with tab2:
     fig_cash = go.Figure()
-    # Positive Capital Contributors (Inventory + AR)
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Inventory Value ($)"], mode='lines', name='Inventory Value', stackgroup='one', fillcolor='lightblue', line=dict(width=0)))
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Accounts Receivable ($)"], mode='lines', name='Accounts Receivable (Buyers owe us)', stackgroup='one', fillcolor='lightgreen', line=dict(width=0)))
     
-    # Negative Capital Contributors (AP)
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=-df["Accounts Payable ($)"], mode='lines', name='Accounts Payable (We owe supplier)', stackgroup='two', fillcolor='salmon', line=dict(width=0)))
+    # Positive Capital Contributors (Stack 1)
+    if opening_capital > 0:
+        fig_cash.add_trace(go.Scatter(x=df["Day"], y=[opening_capital]*days, mode='lines', name='Opening Capital Buffer', stackgroup='one', fillcolor='#ff7f0e', line=dict(width=0)))
     
-    # Net Capital Utilized Line
-    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Capital Utilized ($)"], mode='lines', name='Net Capital Utilized', line=dict(color='purple', width=3)))
+    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Inventory Value ($)"], mode='lines', name='Inventory Value', stackgroup='one', fillcolor='#1f77b4', line=dict(width=0)))
+    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Accounts Receivable ($)"], mode='lines', name='Accounts Receivable', stackgroup='one', fillcolor='#2ca02c', line=dict(width=0)))
+    
+    # Negative Capital Contributors (Stack 2)
+    fig_cash.add_trace(go.Scatter(x=df["Day"], y=-df["Accounts Payable ($)"], mode='lines', name='Accounts Payable', stackgroup='two', fillcolor='#d62728', line=dict(width=0)))
+    
+    # Net Capital Required Line
+    fig_cash.add_trace(go.Scatter(x=df["Day"], y=df["Net Capital Required ($)"], mode='lines', name='Net Capital Required (Borrowing)', line=dict(color='#00e5ff', width=3)))
     
     fig_cash.update_layout(
         title="Where is the Cash? (Capital Utilized Breakdown)",
