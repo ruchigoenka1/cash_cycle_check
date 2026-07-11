@@ -244,5 +244,10 @@ with tab2:
 st.markdown("---")
 st.subheader("📋 Daily Cash Flow Statement & Inventory")
 st.markdown("Auditing the day-by-day cash disbursements and receipts.")
-cols_to_show = ["Day", "Demand", "Sales", "Inventory Units", "Inventory Position", "Cash Outflow ($)", "Cash Inflow ($)", "Net Daily Cash Flow ($)", "Running Cash Balance ($)", "Capital Deficit (Borrowing) ($)"]
+cols_to_show = [
+    "Day", "Demand", "Sales", "Inventory Units", "Inventory Position", 
+    "Cash Outflow ($)", "Cash Inflow ($)", "Net Daily Cash Flow ($)", 
+    "Running Cash Balance ($)", "Capital Deficit (Borrowing) ($)", 
+    "Daily Phys. Holding Cost ($)", "Daily Capital Cost ($)"
+]
 st.dataframe(df_kpi[cols_to_show], use_container_width=True, height=400)
