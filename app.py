@@ -21,7 +21,7 @@ unit_value = st.sidebar.number_input("Value of Product (Unit Cost $)", min_value
 physical_holding_cost = st.sidebar.number_input("Physical Holding Cost/Unit/Year ($)", min_value=0.0, value=10.0)
 cost_of_capital_pct = st.sidebar.number_input("Cost of Capital (Annual %)", min_value=0.0, value=12.0) / 100.0
 ordering_cost = st.sidebar.number_input("Ordering Cost per Order ($)", min_value=1.0, value=250.0)
-credit_rx = st.sidebar.number_input("Credit Time from Supplier (Days)", min_value=0, value=30)
+credit_rx = st.sidebar.number_input("Credit Time from Supplier (Days)", min_value=0, value=30, help="Clock starts on the day the order is processed.")
 credit_given = st.sidebar.number_input("Credit Time given to Buyer (Days)", min_value=0, value=15)
 
 st.sidebar.header("3. Service & Ordering Parameters")
@@ -56,7 +56,7 @@ daily_demands = np.maximum(0, np.random.normal(avg_demand, variation, sim_days))
 
 # Initialize variables
 inventory = rop_input + order_qty
-pending_orders = [] # List to hold multiple incoming orders
+pending_orders = [] 
 
 # Financial tracking schedules
 max_buffer = max(credit_rx, credit_given) + lead_time + 1
@@ -76,8 +76,6 @@ for day in range(sim_days):
     for order in pending_orders:
         if order['days_until_delivery'] == 0:
             inventory += order['qty']
-            current_ap += order['qty'] * unit_value
-            ap_schedule[day + credit_rx] += order['qty'] * unit_value
             order['delivered'] = True
             
     # Remove delivered orders from list
@@ -97,7 +95,6 @@ for day in range(sim_days):
     ar_schedule[day + credit_given] += sold * unit_value
         
     # 3. Place new orders using INVENTORY POSITION
-    # Inventory Position = Stock on Hand + Stock on Order
     on_order_qty = sum(o['qty'] for o in pending_orders)
     inventory_position = inventory + on_order_qty
     
@@ -107,6 +104,10 @@ for day in range(sim_days):
         pending_orders.append({'days_until_delivery': lead_time, 'qty': order_qty})
         inventory_position += order_qty
         placed_today += 1
+        
+        # AP amount due starts from the day the order is processed
+        current_ap += order_qty * unit_value
+        ap_schedule[day + credit_rx] += order_qty * unit_value
         
     # 4. Advance delivery timer for NEXT day
     for order in pending_orders:
@@ -142,6 +143,15 @@ avg_inv = df_kpi["Inventory Units"].mean()
 min_inv = df_kpi["Inventory Units"].min()
 max_inv = df_kpi["Inventory Units"].max()
 
+max_inv_val = df_kpi["Inventory Value ($)"].max()
+min_inv_val = df_kpi["Inventory Value ($)"].min()
+
+max_ap = df_kpi["Accounts Payable ($)"].max()
+min_ap = df_kpi["Accounts Payable ($)"].min()
+
+max_ar = df_kpi["Accounts Receivable ($)"].max()
+min_ar = df_kpi["Accounts Receivable ($)"].min()
+
 total_demand_kpi = df_kpi["Demand"].sum()
 total_sales_kpi = df_kpi["Sales"].sum()
 fill_rate = (total_sales_kpi / total_demand_kpi) * 100 if total_demand_kpi > 0 else 0
@@ -162,13 +172,33 @@ with col1:
     st.metric(label="Stock Out Days", value=f"{stockout_days}")
 with col2:
     st.metric(label="Average Inventory", value=f"{int(avg_inv)} units")
-    st.metric(label="Min / Max Inventory", value=f"{int(min_inv)} / {int(max_inv)}")
+    st.metric(label="Total Inventory Cost", value=f"${total_inventory_cost:,.0f}")
 with col3:
     st.metric(label="Physical Holding Cost", value=f"${total_phys_holding_cost:,.0f}")
     st.metric(label="Cost of Capital", value=f"${total_capital_cost:,.0f}")
 with col4:
     st.metric(label="Ordering Cost", value=f"${total_ordering_cost:,.0f}")
-    st.metric(label="Total Inventory Cost", value=f"${total_inventory_cost:,.0f}")
+    st.metric(label="Total Orders Placed", value=f"{total_orders_kpi}")
+
+# --- COLLAPSIBLE MIN/MAX SECTION ---
+with st.expander("📊 View Min/Max Financial & Inventory Details"):
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("**Inventory (Units)**")
+        st.markdown(f"**Max:** {int(max_inv):,}")
+        st.markdown(f"**Min:** {int(min_inv):,}")
+    with c2:
+        st.markdown("**Inventory Value ($)**")
+        st.markdown(f"**Max:** ${max_inv_val:,.2f}")
+        st.markdown(f"**Min:** ${min_inv_val:,.2f}")
+    with c3:
+        st.markdown("**Accounts Payable ($)**")
+        st.markdown(f"**Max:** ${max_ap:,.2f}")
+        st.markdown(f"**Min:** ${min_ap:,.2f}")
+    with c4:
+        st.markdown("**Accounts Receivable ($)**")
+        st.markdown(f"**Max:** ${max_ar:,.2f}")
+        st.markdown(f"**Min:** ${min_ar:,.2f}")
 
 st.markdown("---")
 
